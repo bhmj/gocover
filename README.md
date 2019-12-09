@@ -1,0 +1,2 @@
+# gocover
+gocover.dev
