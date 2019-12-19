@@ -18,6 +18,7 @@ Endpoints:
   - `gocover.dev/cover/{repo}` manual coverage 
     - go version
     - deep test
+    - short test
   - `gocover.dev/badge/{repo}` get badge
   - `gocover.dev/hook/{repo}` webhook handler
   - `gocover.dev/register/` register

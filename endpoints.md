@@ -1,0 +1,21 @@
+Endpoints logic:
+
+  - `gocover.dev/cover/{repo}?version=&deep=&short` manual coverage 
+	- return intermediate html
+	- 0.5..1s poll for log /// transer-type: chunked
+	  - display progress bar
+	  - write output
+	  - show output on timeout (2s+)
+	- hide output/bar on completion/error
+	- display result or error
+  - `gocover.dev/_badge/{repo}` get badge
+	  - get cached result
+	  - if not, enqueue runner
+  - `gocover.dev/hook/{repo}` webhook handler
+	  - return 202 accepted (see)
+  - `gocover.dev/register/` register
+	  - ???
+  - `gocover.dev/add/` add webhook for repo
+	  - ???
+  - `gocover.dev/about/` about
+      - return static

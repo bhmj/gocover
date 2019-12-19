@@ -1,0 +1,2007 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">github.com/bhmj/jsonslice/expression.go (91.4%)</option>
+				
+				<option value="file1">github.com/bhmj/jsonslice/jsonslice.go (88.9%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">no coverage</span>
+				<span class="cov1">low coverage</span>
+				<span class="cov2">*</span>
+				<span class="cov3">*</span>
+				<span class="cov4">*</span>
+				<span class="cov5">*</span>
+				<span class="cov6">*</span>
+				<span class="cov7">*</span>
+				<span class="cov8">*</span>
+				<span class="cov9">*</span>
+				<span class="cov10">high coverage</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">package jsonslice
+
+import (
+        "regexp"
+        "strconv"
+)
+
+const (
+        cOpNone   = 1 &lt;&lt; iota
+        cOpNumber = 1 &lt;&lt; iota
+        cOpString = 1 &lt;&lt; iota
+        cOpBool   = 1 &lt;&lt; iota
+        cOpNull   = 1 &lt;&lt; iota
+        cOpRegexp = 1 &lt;&lt; iota
+)
+
+/*
+var operatorFn map[byte]
+
+func init() {
+        setupOperatorMap()
+}
+*/
+
+/*
+  &lt;operand&gt; [ &lt;operator&gt; &lt;operand&gt; ] [ &lt;compare&gt; &lt;operand&gt; [ &lt;operator&gt; &lt;operand&gt; ] ]
+
+  &lt;filter&gt; : &lt;expression&gt; [ &lt;operator&gt; &lt;expression&gt; ]   &lt;--- .single
+  &lt;expression&gt; : &lt;operand&gt; [ &lt;operator&gt; &lt;operand&gt; ]
+  &lt;compare&gt; : /(==)|(!=)|(&gt;)|(&lt;)|(&gt;=)|(&lt;=)/
+  &lt;operand&gt; : &lt;number&gt; | &lt;string&gt; | &lt;bool&gt; | &lt;jsonpath&gt;
+  &lt;number&gt; : /-?[0-9]+(\.[0-9]*?)?((E|e)[0-9]+)?/
+  &lt;string&gt; : /"[^"]*"/
+  &lt;bool&gt; : /(true)|(false)/
+  &lt;jsonpath&gt; : /[@$].+/           &lt;--- .exists
+  &lt;operator&gt; : /[+-/*] | (&gt;=,&lt;=,==,!=,&gt;,&lt;) | (&amp;&amp;,||)/
+*/
+
+type tFilter struct {
+        toks []*tToken
+}
+type tToken struct {
+        Operand  *tOperand
+        Operator byte
+}
+type tOperand struct {
+        Type   int // cOp*
+        Number float64
+        Bool   bool
+        Str    []byte
+        Node   *tNode
+        Regexp *regexp.Regexp
+}
+
+var operator = [...]string{"&gt;=", "&lt;=", "==", "!=~", "!~", "!=", "=~", "&gt;", "&lt;", "&amp;&amp;", "||"}
+var operatorCode = [...]byte{'G', 'L', 'E', 'r', 'r', 'N', 'R', 'g', 'l', '&amp;', '|'}
+var operatorPrecedence = map[byte]int{'&amp;': 1, '|': 1, 'g': 2, 'l': 2, 'E': 2, 'N': 2, 'R': 2, 'r': 2, 'G': 2, 'L': 2, '+': 3, '-': 3, '*': 4, '/': 4}
+
+type stack struct {
+        s []*tToken
+}
+
+func reverse(s []*tToken) []*tToken <span class="cov4" title="33">{
+        l := len(s)
+        for i := 0; i &lt; l/2; i++ </span><span class="cov5" title="41">{
+                s[i], s[l-i-1] = s[l-i-1], s[i]
+        }</span>
+        <span class="cov4" title="33">return s</span>
+}
+
+func (s *stack) push(tok *tToken) <span class="cov6" title="154">{
+        s.s = append(s.s, tok)
+}</span>
+func (s *stack) pop() *tToken <span class="cov5" title="74">{
+        l := len(s.s)
+        if l == 0 </span><span class="cov4" title="33">{
+                return nil
+        }</span>
+        <span class="cov5" title="41">v := (s.s)[l-1]
+        s.s = (s.s)[:l-1]
+        return v</span>
+}
+func (s *stack) peek() (tok *tToken) <span class="cov5" title="48">{
+        l := len(s.s)
+        if l == 0 </span><span class="cov5" title="37">{
+                return nil
+        }</span>
+        <span class="cov3" title="11">return (s.s)[l-1]</span>
+}
+func (s *stack) get() []*tToken <span class="cov4" title="33">{
+        return s.s
+}</span>
+
+func readFilter(path []byte, i int, nod *tNode) (int, error) <span class="cov4" title="34">{
+        l := len(path)
+
+        // lexer
+        tokens := make([]*tToken, 0)
+        var tok *tToken
+        var err error
+        prevOperator := byte('+')
+        for i &lt; l &amp;&amp; path[i] != ')' </span><span class="cov6" title="117">{
+                i, tok, err = nextToken(path, i, prevOperator)
+                if err != nil </span><span class="cov1" title="1">{
+                        return i, err
+                }</span>
+                <span class="cov6" title="116">if tok != nil </span><span class="cov6" title="116">{
+                        prevOperator = tok.Operator
+                        tokens = append(tokens, tok)
+                }</span>
+        }
+
+        //parser
+        <span class="cov4" title="33">opStack := new(stack)
+        result := new(stack)
+        for t := len(tokens) - 1; t &gt;= 0; t-- </span><span class="cov6" title="113">{
+                op := tokens[t]
+                if op.Operand != nil </span><span class="cov5" title="72">{
+                        result.push(op)
+                }</span> else<span class="cov5" title="41"> {
+                        for </span><span class="cov5" title="48">{
+                                top := opStack.peek()
+                                if top != nil &amp;&amp; operatorPrecedence[top.Operator] &gt;= operatorPrecedence[op.Operator] </span><span class="cov3" title="7">{
+                                        result.push(opStack.pop())
+                                        continue</span>
+                                }
+                                <span class="cov5" title="41">break</span>
+                        }
+                        <span class="cov5" title="41">opStack.push(op)</span>
+                }
+        }
+        <span class="cov4" title="33">for </span><span class="cov5" title="67">{
+                top := opStack.pop()
+                if top == nil </span><span class="cov4" title="33">{
+                        break</span>
+                }
+                <span class="cov4" title="34">result.push(top)</span>
+        }
+
+        <span class="cov4" title="33">nod.Filter = &amp;tFilter{toks: reverse(result.get())}
+        nod.Type |= cFilter
+        nod.Type &amp;^= cDot
+
+        if i &lt; l </span><span class="cov4" title="33">{
+                i++ // ')'
+                if i &lt; l &amp;&amp; path[i] == ']' </span><span class="cov4" title="33">{
+                        i++
+                }</span>
+        }
+        <span class="cov4" title="33">return i, nil</span>
+}
+
+// operand = (number, string, node), operator, compare
+func nextToken(path []byte, i int, prevOperator byte) (int, *tToken, error) <span class="cov6" title="117">{
+        var err error
+        var tok *tToken
+        l := len(path)
+        for i &lt; l &amp;&amp; path[i] != ')' </span><span class="cov6" title="117">{
+                i, err = skipSpaces(path, i)
+                if err != nil </span><span class="cov0" title="0">{
+                        return 0, nil, err
+                }</span>
+                // end of filter
+                <span class="cov6" title="117">if path[i] == ')' </span><span class="cov0" title="0">{
+                        break</span>
+                }
+                // regexp
+                <span class="cov6" title="117">if path[i] == '/' &amp;&amp; prevOperator&amp;^('r'-'R') == 'R' </span><span class="cov2" title="5">{
+                        return readRegexp(path, i)
+                }</span>
+                // number
+                <span class="cov6" title="112">if (path[i] &gt;= '0' &amp;&amp; path[i] &lt;= '9') || (path[i] == '-' &amp;&amp; prevOperator != 0) </span><span class="cov3" title="14">{
+                        return readNumber(path, i)
+                }</span>
+                // string
+                <span class="cov6" title="98">if path[i] == '"' || path[i] == '\'' </span><span class="cov2" title="6">{
+                        return readString(path, i)
+                }</span>
+                // bool
+                <span class="cov6" title="92">if path[i] == 't' || path[i] == 'f' </span><span class="cov2" title="4">{
+                        return readBool(path, i)
+                }</span>
+                <span class="cov5" title="88">return tokComplex(path, i)</span>
+        }
+        <span class="cov0" title="0">return i, tok, nil</span>
+}
+
+func tokComplex(path []byte, i int) (int, *tToken, error) <span class="cov5" title="88">{
+        l := len(path)
+        // jsonpath node
+        if path[i] == '@' || path[i] == '$' </span><span class="cov5" title="45">{
+                nod, j, err := readRef(path[i:], 1, 0)
+                if err != nil </span><span class="cov0" title="0">{
+                        return 0, nil, err
+                }</span>
+                <span class="cov5" title="45">if path[i] == '$' </span><span class="cov3" title="12">{
+                        nod.Type |= cRoot
+                }</span>
+                <span class="cov5" title="45">i += j
+                return i, &amp;tToken{Operand: &amp;tOperand{Type: cOpNone, Node: nod}}, nil</span>
+        }
+        // operator
+        <span class="cov5" title="43">if bytein(path[i], []byte{'+', '-', '*', '/'}) </span><span class="cov2" title="6">{
+                return i + 1, &amp;tToken{Operator: path[i]}, nil
+        }</span>
+        // compare
+        <span class="cov5" title="37">if i &gt;= l-1 </span><span class="cov0" title="0">{
+                return i, nil, errUnexpectedEOT
+        }</span>
+        <span class="cov5" title="37">for ic, cmp := range operator </span><span class="cov7" title="248">{
+                if string(path[i:i+len(cmp)]) == cmp </span><span class="cov4" title="36">{
+                        return i + len(cmp), &amp;tToken{Operator: operatorCode[ic]}, nil
+                }</span>
+        }
+        <span class="cov1" title="1">return i, nil, errUnknownToken</span>
+}
+
+func readNumber(path []byte, i int) (int, *tToken, error) <span class="cov3" title="14">{
+        e, err := skipValue(path, i)
+        if err != nil </span><span class="cov0" title="0">{
+                return e, nil, err
+        }</span>
+        <span class="cov3" title="14">s, err := strconv.ParseFloat(string(path[i:e]), 64)
+        if err != nil </span><span class="cov0" title="0">{
+                return e, nil, err
+        }</span>
+        <span class="cov3" title="14">return e, &amp;tToken{Operand: &amp;tOperand{Type: cOpNumber, Number: s}}, nil</span>
+}
+
+func readString(path []byte, i int) (int, *tToken, error) <span class="cov2" title="6">{
+        bound := path[i]
+        prev := bound
+        i++ // quote
+        s := i
+        l := len(path)
+        for i &lt; l </span><span class="cov5" title="45">{
+                ch := path[i]
+                if ch == bound </span><span class="cov3" title="8">{
+                        if prev != '\\' </span><span class="cov2" title="6">{
+                                break</span>
+                        }
+                }
+                <span class="cov5" title="39">prev = ch
+                i++</span>
+        }
+        <span class="cov2" title="6">if i == l </span><span class="cov0" title="0">{
+                return i, nil, errUnexpectedStringEnd
+        }</span>
+        <span class="cov2" title="6">e := i
+        i++ // unquote
+
+        return i, &amp;tToken{Operand: &amp;tOperand{Type: cOpString, Str: path[s:e]}}, nil</span>
+}
+
+func readBool(path []byte, i int) (int, *tToken, error) <span class="cov2" title="4">{
+        s := i
+        l := len(path)
+        t, f := []byte("true\x00\x00"), []byte("false\x00")
+        for i &lt; l &amp;&amp; (path[i] == t[i-s] || path[i] == f[i-s]) &amp;&amp; (t[i-s] &gt; 0 || f[i-s] &gt; 0) </span><span class="cov4" title="18">{
+                i++
+        }</span>
+        <span class="cov2" title="4">if i == l || t[i-s] &gt; 0 &amp;&amp; f[i-s] &gt; 0 </span><span class="cov0" title="0">{
+                return i, nil, errInvalidBoolean
+        }</span>
+
+        <span class="cov2" title="4">return i, &amp;tToken{Operand: &amp;tOperand{Type: cOpBool, Bool: path[s] == 't'}}, nil</span>
+}
+
+func readRegexp(path []byte, i int) (int, *tToken, error) <span class="cov2" title="5">{
+        l := len(path)
+        prev := byte(0)
+        re := make([]byte, 0, 32)
+        flags := make([]byte, 0, 8)
+        i++
+        for i &lt; l &amp;&amp; !(path[i] == '/' &amp;&amp; prev != '\\') </span><span class="cov5" title="43">{
+                prev = path[i]
+                re = append(re, prev)
+                i++
+        }</span>
+        <span class="cov2" title="5">if i &lt; l </span><span class="cov2" title="5">{ // skip trailing '/'
+                i++
+        }</span>
+        <span class="cov2" title="5">flags = append(flags, '(', '?')
+        for i &lt; l &amp;&amp; len(flags) &lt; 4 &amp;&amp; (path[i] == 'i' || path[i] == 'm' || path[i] == 's' || path[i] == 'U') </span><span class="cov1" title="2">{
+                flags = append(flags, path[i])
+                i++
+        }</span>
+        <span class="cov2" title="5">flags = append(flags, ')')
+        rex := ""
+        if len(flags) &gt; 3 </span><span class="cov1" title="2">{
+                rex = string(flags) + string(re)
+        }</span> else<span class="cov2" title="3"> {
+                rex = string(re)
+        }</span>
+        <span class="cov2" title="5">reg, err := regexp.Compile(rex)
+        if err != nil </span><span class="cov0" title="0">{
+                return i, nil, err
+        }</span>
+        <span class="cov2" title="5">return i, &amp;tToken{Operand: &amp;tOperand{Type: cOpRegexp, Regexp: reg}}, nil</span>
+}
+
+// filterMatch
+func filterMatch(input []byte, toks []*tToken) (bool, error) <span class="cov6" title="123">{
+        if len(toks) == 0 </span><span class="cov1" title="1">{
+                return false, errEmptyFilter
+        }</span>
+        <span class="cov6" title="122">op, _, err := evalToken(input, toks)
+        if err != nil </span><span class="cov1" title="2">{
+                return false, err
+        }</span>
+        <span class="cov6" title="120">switch op.Type </span>{
+        case cOpNull:<span class="cov1" title="2">
+                return false, nil</span>
+        case cOpBool:<span class="cov6" title="112">
+                return op.Bool, nil</span>
+        case cOpNumber:<span class="cov2" title="4">
+                return op.Number &gt; 0, nil</span>
+        case cOpString:<span class="cov1" title="2">
+                return len(op.Str) &gt; 0, nil</span>
+        default:<span class="cov0" title="0">
+                return false, nil</span>
+        }
+}
+
+func evalToken(input []byte, toks []*tToken) (*tOperand, []*tToken, error) <span class="cov7" title="438">{
+        if len(toks) == 0 </span><span class="cov1" title="1">{
+                return nil, toks, errNotEnoughArguments
+        }</span>
+        <span class="cov7" title="437">tok := toks[0]
+        if tok.Operand != nil </span><span class="cov7" title="279">{
+                if tok.Operand.Node != nil </span><span class="cov6" title="125">{
+                        val, err := getValue(input, tok.Operand.Node, false)
+                        if len(val) == 0 || err != nil </span><span class="cov3" title="14">{
+                                // not found or other error
+                                tok.Operand.Type = cOpNull
+                                return tok.Operand, toks[1:], nil
+                        }</span>
+                        <span class="cov6" title="111">return tok.Operand, toks[1:], decodeValue(val, tok.Operand)</span>
+                }
+                <span class="cov6" title="154">return tok.Operand, toks[1:], nil</span>
+        }
+        <span class="cov6" title="158">var (
+                err   error
+                left  *tOperand
+                right *tOperand
+        )
+        left, toks, err = evalToken(input, toks[1:])
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, toks, err
+        }</span>
+        <span class="cov6" title="158">right, toks, err = evalToken(input, toks)
+        if err != nil </span><span class="cov1" title="1">{
+                return nil, toks, err
+        }</span>
+
+        <span class="cov6" title="157">op, err := execOperator(tok.Operator, left, right)
+        return op, toks, err</span>
+}
+
+func decodeValue(input []byte, op *tOperand) error <span class="cov6" title="123">{
+        i, err := skipSpaces(input, 0)
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+        <span class="cov6" title="123">e, err := skipValue(input, i)
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+        <span class="cov6" title="123">if bytein(input[i], []byte{'"', '\'', '{', '['}) </span><span class="cov5" title="39">{
+                // string
+                op.Type = cOpString
+                if input[i] == '"' || input[i] == '\'' </span><span class="cov5" title="39">{ // exclude quotes
+                        i++
+                        e--
+                }</span>
+                <span class="cov5" title="39">op.Str = input[i:e]</span>
+        } else<span class="cov5" title="84"> if (input[i] &gt;= '0' &amp;&amp; input[i] &lt;= '9') || input[i] == '-' || input[i] == '.' </span><span class="cov5" title="80">{
+                // number
+                f, err := strconv.ParseFloat(string(input[i:e]), 64)
+                if err != nil </span><span class="cov0" title="0">{
+                        op.Type = cOpNone
+                        return err
+                }</span>
+                <span class="cov5" title="80">op.Type = cOpNumber
+                op.Number = f</span>
+        } else<span class="cov2" title="4"> {
+                //
+                ch := input[i]
+                if ch &gt;= 'A' &amp;&amp; ch &lt;= 'Z' </span><span class="cov0" title="0">{
+                        ch += 'a' - 'A'
+                }</span>
+                <span class="cov2" title="4">if ch == 't' || ch == 'f' </span><span class="cov2" title="4">{
+                        op.Type = cOpBool
+                        op.Bool = ch == 't'
+                }</span> else<span class="cov0" title="0"> {
+                        op.Type = cOpNull
+                }</span>
+        }
+        <span class="cov6" title="123">return nil</span>
+}
+
+func execOperator(op byte, left *tOperand, right *tOperand) (*tOperand, error) <span class="cov6" title="157">{
+        var res tOperand
+
+        if op == '+' || op == '-' || op == '*' || op == '/' </span><span class="cov4" title="20">{
+                // arithmetic
+                return opArithmetic(op, left, right)
+        }</span> else<span class="cov6" title="137"> if op == 'g' || op == 'l' || op == 'E' || op == 'N' || op == 'G' || op == 'L' || op == 'R' || op == 'r' </span><span class="cov6" title="117">{
+                // comparison
+                return opComparison(op, left, right)
+        }</span> else<span class="cov4" title="20"> if op == '&amp;' || op == '|' </span><span class="cov4" title="20">{
+                // logic
+                return opLogic(op, left, right)
+        }</span>
+        <span class="cov0" title="0">return &amp;res, errUnknownOperator</span>
+}
+
+func opArithmetic(op byte, left *tOperand, right *tOperand) (*tOperand, error) <span class="cov4" title="20">{
+        var res tOperand
+
+        if left.Type != cOpNumber || right.Type != cOpNumber </span><span class="cov0" title="0">{
+                return nil, errInvalidArithmetic
+        }</span>
+        <span class="cov4" title="20">res.Type = left.Type
+        switch op </span>{
+        case '+':<span class="cov2" title="4">
+                res.Number = left.Number + right.Number</span>
+        case '-':<span class="cov2" title="4">
+                res.Number = left.Number - right.Number</span>
+        case '*':<span class="cov3" title="8">
+                res.Number = left.Number * right.Number</span>
+        case '/':<span class="cov2" title="4">
+                res.Number = left.Number / right.Number</span>
+        }
+        <span class="cov4" title="20">return &amp;res, nil</span>
+}
+
+func opComparison(op byte, left *tOperand, right *tOperand) (*tOperand, error) <span class="cov6" title="117">{
+        var res tOperand
+
+        res.Type = cOpBool
+        if left.Type == cOpNull || right.Type == cOpNull </span><span class="cov3" title="8">{
+                res.Bool = false
+                return &amp;res, nil
+        }</span>
+        <span class="cov6" title="109">if op == 'R' || op == 'r' </span><span class="cov4" title="20">{
+                if !(left.Type == cOpString &amp;&amp; right.Type == cOpRegexp) </span><span class="cov0" title="0">{
+                        return nil, errInvalidRegexp
+                }</span>
+        } else<span class="cov5" title="89"> if left.Type != right.Type </span><span class="cov0" title="0">{
+                return nil, errOperandTypes
+        }</span>
+        <span class="cov6" title="109">switch left.Type </span>{
+        case cOpBool:<span class="cov4" title="16">
+                return opComparisonBool(op, left, right)</span>
+        case cOpNumber:<span class="cov5" title="60">
+                return opComparisonNumber(op, left, right)</span>
+        case cOpString:<span class="cov4" title="33">
+                return opComparisonString(op, left, right)</span>
+        }
+        <span class="cov0" title="0">return &amp;res, nil</span>
+}
+
+func opComparisonBool(op byte, left *tOperand, right *tOperand) (*tOperand, error) <span class="cov4" title="16">{
+        var res tOperand
+
+        res.Type = cOpBool
+        switch op </span>{
+        case 'g':<span class="cov2" title="4">
+                res.Bool = (left.Bool &amp;&amp; !right.Bool)</span>
+        case 'l':<span class="cov2" title="4">
+                res.Bool = (!left.Bool &amp;&amp; right.Bool)</span>
+        case 'E':<span class="cov2" title="4">
+                res.Bool = (left.Bool == right.Bool)</span>
+        case 'N':<span class="cov2" title="4">
+                res.Bool = (left.Bool != right.Bool)</span>
+        case 'G':<span class="cov0" title="0"></span>
+        case 'L':<span class="cov0" title="0">
+                res.Bool = right.Bool</span>
+        }
+        <span class="cov4" title="16">return &amp;res, nil</span>
+}
+
+func opComparisonNumber(op byte, left *tOperand, right *tOperand) (*tOperand, error) <span class="cov5" title="60">{
+        var res tOperand
+        res.Type = cOpBool
+        switch op </span>{
+        case 'g':<span class="cov4" title="36">
+                res.Bool = left.Number &gt; right.Number</span>
+        case 'l':<span class="cov2" title="4">
+                res.Bool = left.Number &lt; right.Number</span>
+        case 'E':<span class="cov3" title="8">
+                res.Bool = left.Number == right.Number</span>
+        case 'N':<span class="cov2" title="4">
+                res.Bool = left.Number != right.Number</span>
+        case 'G':<span class="cov2" title="4">
+                res.Bool = left.Number &gt;= right.Number</span>
+        case 'L':<span class="cov2" title="4">
+                res.Bool = left.Number &lt;= right.Number</span>
+        }
+        <span class="cov5" title="60">return &amp;res, nil</span>
+}
+
+func opComparisonString(op byte, left *tOperand, right *tOperand) (*tOperand, error) <span class="cov4" title="33">{
+        var res tOperand
+        res.Type = cOpBool
+        switch op </span>{
+        case 'E':<span class="cov2" title="6">
+                res.Bool = compareSlices(left.Str, right.Str) == 0</span>
+        case 'N':<span class="cov2" title="6">
+                res.Bool = compareSlices(left.Str, right.Str) != 0</span>
+        case 'R':<span class="cov3" title="8">
+                res.Bool = right.Regexp.MatchString(string(left.Str))</span>
+        case 'r':<span class="cov3" title="12">
+                res.Bool = !right.Regexp.MatchString(string(left.Str))</span>
+        default:<span class="cov1" title="1">
+                return left, errInvalidOperatorStrings</span>
+        }
+        <span class="cov4" title="32">return &amp;res, nil</span>
+}
+
+func opLogic(op byte, left *tOperand, right *tOperand) (*tOperand, error) <span class="cov4" title="20">{
+        var res tOperand
+        res.Type = cOpBool
+        if left.Type == cOpNull || right.Type == cOpNull </span><span class="cov2" title="4">{
+                res.Bool = false
+                return &amp;res, nil
+        }</span>
+        <span class="cov4" title="16">l := false
+        r := false
+        switch left.Type </span>{
+        case cOpBool:<span class="cov3" title="12">
+                l = left.Bool</span>
+        case cOpNumber:<span class="cov2" title="4">
+                l = left.Number != 0</span>
+        case cOpString:<span class="cov0" title="0">
+                l = len(left.Str) &gt; 0</span>
+        }
+        <span class="cov4" title="16">switch right.Type </span>{
+        case cOpBool:<span class="cov3" title="8">
+                r = right.Bool</span>
+        case cOpNumber:<span class="cov2" title="4">
+                r = right.Number != 0</span>
+        case cOpString:<span class="cov2" title="4">
+                r = len(right.Str) &gt; 0</span>
+        }
+        <span class="cov4" title="16">if op == '&amp;' </span><span class="cov2" title="6">{
+                res.Bool = l &amp;&amp; r
+        }</span> else<span class="cov3" title="10"> {
+                res.Bool = l || r
+        }</span>
+        <span class="cov4" title="16">return &amp;res, nil</span>
+}
+
+func compareSlices(s1 []byte, s2 []byte) int <span class="cov6" title="108">{
+        if len(s1) != len(s2) </span><span class="cov3" title="7">{
+                return len(s1) - len(s2)
+        }</span>
+        <span class="cov6" title="101">for i := range s1 </span><span class="cov10" title="3330">{
+                if s1[i] != s2[i] </span><span class="cov1" title="2">{
+                        return int(s1[i] - s2[i])
+                }</span>
+        }
+        <span class="cov6" title="99">return 0</span>
+}
+</pre>
+		
+		<pre class="file" id="file1" style="display: none">package jsonslice
+
+/**
+  JsonSlice 1.0.1
+  Michael Gurov, 2018-2019
+  MIT licenced
+
+  Slice a part of a raw json ([]byte) using jsonpath, without unmarshalling the whole thing.
+  The result is also []byte.
+**/
+
+import (
+        "bytes"
+        "encoding/hex"
+        "errors"
+        "strconv"
+        "sync"
+)
+
+var (
+        nodePool sync.Pool
+
+        errPathEmpty,
+        errPathInvalidChar,
+        errPathRootExpected,
+        errPathUnexpectedEnd,
+        errPathUnknownFunction,
+        errFieldNotFound,
+        errColonExpected,
+        errUnrecognizedValue,
+        errUnexpectedEnd,
+        errInvalidLengthUsage,
+        errObjectOrArrayExpected,
+        errUnexpectedEOT,
+        errUnknownToken,
+        errUnexpectedStringEnd,
+        errInvalidBoolean,
+        errEmptyFilter,
+        errNotEnoughArguments,
+        errUnknownOperator,
+        errInvalidArithmetic,
+        errInvalidRegexp,
+        errOperandTypes,
+        errInvalidOperatorStrings error
+)
+
+var speChars [128]byte
+
+func init() <span class="cov1" title="1">{
+
+        speChars['b'] = '\b'
+        speChars['f'] = '\f'
+        speChars['n'] = '\n'
+        speChars['r'] = '\r'
+        speChars['t'] = '\t'
+
+        nodePool = sync.Pool{
+                New: func() interface{} </span><span class="cov3" title="56">{
+                        return &amp;tNode{
+                                Keys:  make([]word, 0, 1), // most common case: a single key
+                                Elems: make([]int, 0),
+                        }
+                }</span>,
+        }
+
+        <span class="cov1" title="1">errPathEmpty = errors.New("path: empty")
+        errPathInvalidChar = errors.New("path: invalid character")
+        errPathRootExpected = errors.New("path: $ expected")
+        errPathUnexpectedEnd = errors.New("path: unexpected end of path")
+        errPathUnknownFunction = errors.New("path: unknown function")
+        errFieldNotFound = errors.New(`field not found`)
+        errColonExpected = errors.New("':' expected")
+        errUnrecognizedValue = errors.New("unrecognized value: true, false or null expected")
+        errUnexpectedEnd = errors.New("unexpected end of input")
+        errInvalidLengthUsage = errors.New("length() is only applicable to array or string")
+        errObjectOrArrayExpected = errors.New("object or array expected")
+        errUnexpectedEOT = errors.New("unexpected end of token")
+        errUnknownToken = errors.New("unknown token")
+        errUnexpectedStringEnd = errors.New("unexpected end of string")
+        errInvalidBoolean = errors.New("invalid boolean value")
+        errEmptyFilter = errors.New("empty filter")
+        errNotEnoughArguments = errors.New("not enough arguments")
+        errUnknownOperator = errors.New("unknown operator")
+        errInvalidArithmetic = errors.New("invalid operands for arithmetic operator")
+        errInvalidRegexp = errors.New("invalid operands for regexp match")
+        errOperandTypes = errors.New("operand types do not match")
+        errInvalidOperatorStrings = errors.New("operator is not applicable to strings")</span>
+}
+
+type word []byte
+
+const (
+        cDot      = 1 &lt;&lt; iota // common [dot-]node
+        cAgg      = 1 &lt;&lt; iota // aggregating
+        cFunction = 1 &lt;&lt; iota // function
+        cSlice    = 1 &lt;&lt; iota // slice array [x:y:s]
+        cFullScan = 1 &lt;&lt; iota // array slice: need fullscan
+        cFilter   = 1 &lt;&lt; iota // filter
+        cWild     = 1 &lt;&lt; iota // wildcard (*)
+        cDeep     = 1 &lt;&lt; iota // deepscan (..)
+
+        cRoot = 1 &lt;&lt; iota // key is referred from root
+
+        cEmpty = 1 &lt;&lt; 29 // empty number
+        cNAN   = 1 &lt;&lt; 30 // not-a-number
+)
+
+type tNode struct {
+        //Key    word
+        Keys   []word
+        Type   int // properties
+        Slice  [3]int
+        Elems  []int
+        Next   *tNode
+        Filter *tFilter
+}
+
+func getEmptyNode() *tNode <span class="cov4" title="354">{
+        nod := nodePool.Get().(*tNode)
+        nod.Elems = nod.Elems[:0]
+        nod.Filter = nil
+        nod.Keys = nod.Keys[:0]
+        nod.Slice[0] = cEmpty
+        nod.Slice[1] = cEmpty
+        nod.Slice[2] = 1
+        nod.Next = nil
+        nod.Type = 0
+        return nod
+}</span>
+
+// Get returns a part of input, matching jsonpath.
+// In terms of allocations there are two cases of retreiving data from the input:
+// 1. (simple case) the result is a simple subslice of a source input.
+// 2. the result is a merge of several non-contiguous parts of input. More allocations are needed.
+func Get(input []byte, path string) ([]byte, error) <span class="cov3" title="126">{
+
+        if len(path) == 0 </span><span class="cov1" title="1">{
+                return nil, errPathEmpty
+        }</span>
+
+        <span class="cov3" title="125">if len(path) == 1 &amp;&amp; path[0] == '$' </span><span class="cov1" title="1">{
+                return input, nil
+        }</span>
+
+        <span class="cov3" title="124">if path[0] != '$' </span><span class="cov1" title="1">{
+                return nil, errPathRootExpected
+        }</span>
+
+        <span class="cov3" title="123">node, i, err := readRef(unspace([]byte(path)), 1, 0)
+        if err != nil </span><span class="cov2" title="8">{
+                repool(node)
+                return nil, errors.New(err.Error() + " at " + strconv.Itoa(i))
+        }</span>
+
+        <span class="cov3" title="115">n := node
+        for </span><span class="cov4" title="289">{
+                n = n.Next
+                if n == nil </span><span class="cov3" title="115">{
+                        break</span>
+                }
+                <span class="cov3" title="174">if n.Filter != nil </span><span class="cov2" title="33">{
+                        for _, tok := range n.Filter.toks </span><span class="cov3" title="113">{
+                                if tok.Operand != nil &amp;&amp; tok.Operand.Node != nil &amp;&amp; tok.Operand.Node.Type&amp;cRoot &gt; 0 </span><span class="cov2" title="12">{
+                                        val, err := getValue(input, tok.Operand.Node, false)
+                                        if err != nil </span><span class="cov0" title="0">{
+                                                // not found or other error
+                                                tok.Operand.Type = cOpNull
+                                        }</span>
+                                        <span class="cov2" title="12">decodeValue(val, tok.Operand)
+                                        tok.Operand.Node = nil</span>
+                                }
+                        }
+                }
+        }
+
+        <span class="cov3" title="115">result, err := getValue(input, node, false)
+        repool(node)
+        return result, err</span>
+}
+
+// returns true if b matches one of the elements of seq
+func bytein(b byte, seq []byte) bool <span class="cov8" title="419790">{
+        for i := 0; i &lt; len(seq); i++ </span><span class="cov8" title="1797520">{
+                if b == seq[i] </span><span class="cov7" title="110041">{
+                        return true
+                }</span>
+        }
+        <span class="cov7" title="309749">return false</span>
+}
+
+var keyTerminator = []byte{' ', '\t', ':', '.', ',', '[', '(', ')', ']', '&lt;', '=', '&gt;', '+', '-', '*', '/', '&amp;', '|', '!'}
+
+func readRef(path []byte, i int, uptype int) (*tNode, int, error) <span class="cov4" title="398">{
+        var err error
+        var next *tNode
+        var sep byte
+        var flags int
+        var key word
+
+        if i &gt;= len(path) </span><span class="cov0" title="0">{
+                return nil, i, nil
+        }</span>
+
+        // path end?
+        <span class="cov4" title="398">if bytein(path[i], pathTerminator) </span><span class="cov3" title="44">{
+                return nil, i, nil
+        }</span>
+        <span class="cov4" title="354">nod := getEmptyNode()
+        l := len(path)
+        // [optional] dots
+        if path[i] == '.' </span><span class="cov4" title="264">{
+                if i+1 &lt; l &amp;&amp; path[i+1] == '.' </span><span class="cov2" title="10">{
+                        nod.Type |= cDeep
+                        i++
+                }</span> else<span class="cov4" title="254"> {
+                        nod.Type |= cDot
+                }</span>
+                <span class="cov4" title="264">i++</span>
+        }
+        <span class="cov4" title="354">if i == l </span><span class="cov1" title="1">{
+                return nil, i, errPathUnexpectedEnd
+        }</span>
+        // bracket notated
+        <span class="cov4" title="353">if path[i] == '[' </span><span class="cov3" title="97">{
+                i++
+                i, err = readBrackets(nod, path, i)
+                if i == l || err != nil </span><span class="cov3" title="50">{
+                        return nod, i, err
+                }</span>
+                <span class="cov3" title="47">next, i, err = readRef(path, i, nod.Type)
+                nod.Next = next
+                return nod, i, err</span>
+        }
+        <span class="cov4" title="256">if nod.Type&amp;(cDot|cDeep) == 0 </span><span class="cov1" title="1">{
+                return nil, i, errPathInvalidChar
+        }</span>
+        // single key
+        <span class="cov4" title="255">key, nod.Slice[0], sep, i, flags, err = readKey(path, i)
+        if len(key) &gt; 0 </span><span class="cov4" title="246">{
+                nod.Keys = append(nod.Keys, key)
+        }</span>
+        <span class="cov4" title="255">nod.Type |= flags // cWild, cFullScan
+        if i == l </span><span class="cov3" title="67">{
+                return nod, i, nil
+        }</span>
+        // function
+        <span class="cov3" title="188">if sep == '(' &amp;&amp; i+1 &lt; l &amp;&amp; path[i+1] == ')' </span><span class="cov1" title="5">{
+                _, i, err = detectFn(path, i, nod)
+                return nod, i, err
+        }</span>
+
+        // recursive
+        <span class="cov3" title="183">next, i, err = readRef(path, i, nod.Type)
+        nod.Next = next
+        return nod, i, err</span>
+}
+
+// read bracket-notated keys
+// consumes final ']'
+func readBrackets(nod *tNode, path []byte, i int) (int, error) <span class="cov3" title="97">{
+        var (
+                key   []byte
+                ikey  int
+                sep   byte
+                err   error
+                flags int
+        )
+        l := len(path)
+        if i &lt; l-1 &amp;&amp; path[i] == '?' &amp;&amp; path[i+1] == '(' </span><span class="cov2" title="34">{
+                return readFilter(path, i+2, nod)
+        }</span>
+        <span class="cov3" title="63">for pos := 0; i &lt; l &amp;&amp; path[i] != ']'; pos++ </span><span class="cov3" title="94">{
+                key, ikey, sep, i, flags, err = readKey(path, i)
+                nod.Type |= flags // cWild, cFullScan // CAUTION: [*,1,2] is possible
+                if err != nil </span><span class="cov0" title="0">{
+                        return i, err
+                }</span>
+                <span class="cov3" title="94">err = setKey(nod, key, ikey, sep, pos)
+                if err != nil </span><span class="cov1" title="4">{
+                        return i, err
+                }</span>
+                <span class="cov3" title="90">if nod.Type&amp;(cSlice|cAgg) == cSlice|cAgg </span><span class="cov0" title="0">{
+                        return i, errPathInvalidChar
+                }</span>
+                <span class="cov3" title="90">if sep == ':' || sep == ',' </span><span class="cov2" title="36">{
+                        i++
+                }</span>
+        }
+        <span class="cov3" title="59">if i == l </span><span class="cov0" title="0">{
+                return i, errPathUnexpectedEnd
+        }</span>
+        <span class="cov3" title="59">if nod.Type&amp;cSlice &gt; 0 &amp;&amp; nod.Slice[0]+nod.Slice[1]+nod.Slice[2] == 2*cEmpty+1 </span><span class="cov1" title="4">{
+                nod.Type |= cWild
+        }</span>
+        <span class="cov3" title="59">if len(nod.Elems) &gt; 0 </span><span class="cov1" title="2">{
+                nod.Type &amp;^= cWild
+        }</span>
+        <span class="cov3" title="59">i++ // ']'
+        return i, nil</span>
+}
+
+// read next key
+// targeted to: ".key", ".*", ".1", ".-1"
+// returns:
+//   key   = the key
+//   ikey  = integer converted key
+//   sep   = key list separator (expected , : [ ] . +-*/=! 0)
+//   i     = current i (after the sep)
+//   flags = cWild if wildcard
+//   err   = error
+func readKey(path []byte, i int) ([]byte, int, byte, int, int, error) <span class="cov4" title="349">{
+        l := len(path)
+        s := i
+        e := i
+        if i == l </span><span class="cov0" title="0">{
+                return nil, 0, 0, i, 0, errPathUnexpectedEnd
+        }</span>
+        <span class="cov4" title="349">step := 0
+        bound := byte(0)
+        if bytein(path[i], []byte{'\'', '"'}) </span><span class="cov2" title="24">{
+                bound = path[i]
+                step++ // will be a closing bound
+                s++    // start 1 char right
+                i++
+        }</span>
+        //prev := byte(0)
+        <span class="cov4" title="349">if bound &gt; 0 </span><span class="cov2" title="24">{
+                s, e, i = readQuotedKey(path, i, bound)
+        }</span> else<span class="cov4" title="325"> {
+                if path[i] == '-' </span><span class="cov2" title="9">{
+                        i++
+                }</span>
+                <span class="cov4" title="325">for i &lt; l </span><span class="cov5" title="1475">{
+                        if bytein(path[i], keyTerminator) </span><span class="cov4" title="265">{
+                                if path[i] == '*' &amp;&amp; s-i == 0 </span><span class="cov2" title="15">{
+                                        step++ // * usually * is a terminator but not in .* so skip it
+                                }</span>
+                                <span class="cov4" title="265">break</span>
+                        }
+                        <span class="cov4" title="1210">i++</span>
+                }
+                <span class="cov4" title="325">e = i</span>
+        }
+        /*
+                i!=l bound=0  // (unbounded) terminator reached s:i (empty for * -&gt; step)
+                i!=l bound="" // (bounded) key s:i (i==bound) -&gt; step
+                i==l bound=0  // (unbounded) EOL reached s:i, i==l
+                i==l bound="" // (bounded) right bound missing
+        */
+        <span class="cov4" title="349">if i == l &amp;&amp; bound != 0 </span><span class="cov0" title="0">{
+                // unclosed bound
+                return nil, cNAN, 0, i, 0, errPathUnexpectedEnd
+        }</span>
+        <span class="cov4" title="349">if i+step != l </span><span class="cov4" title="279">{
+                bound = path[i+step]
+        }</span> else<span class="cov3" title="70"> {
+                bound = 0
+        }</span>
+        <span class="cov4" title="349">n := toInt(path[s:e])
+        return path[s:e], n, bound, i + step, flags(e-s, path[s], n), nil</span>
+}
+
+// read quotedkey
+// return
+//   s start index
+//   e end index
+//   i current pointer
+//
+func readQuotedKey(path []byte, i int, bound byte) (int, int, int) <span class="cov2" title="24">{
+        l := len(path)
+        s := i
+        w := i
+        var prev byte
+
+        for i &lt; l </span><span class="cov3" title="125">{
+                if path[i] == bound </span><span class="cov2" title="25">{
+                        if prev == '\\' </span><span class="cov1" title="1">{
+                                w--
+                        }</span> else<span class="cov2" title="24"> {
+                                break</span>
+                        }
+                }
+                <span class="cov3" title="101">if i != w </span><span class="cov1" title="6">{
+                        path[w] = path[i]
+                }</span>
+                <span class="cov3" title="101">prev = path[i]
+                i++
+                w++</span>
+        }
+        <span class="cov2" title="24">return s, w, i</span>
+}
+
+// flags determined by ikey
+func flags(n int, ch byte, ikey int) int <span class="cov4" title="349">{
+        flag := 0
+        if ikey &lt; 0 || ikey == cEmpty </span><span class="cov2" title="33">{
+                flag |= cFullScan // fullscan if $[-1], $[1,-1] or $[1:-1] or $[1:]
+        }</span>
+        <span class="cov4" title="349">if n == 0 &amp;&amp; ch == '*' </span><span class="cov2" title="15">{
+                flag |= cWild
+        }</span>
+        <span class="cov4" title="349">return flag</span>
+}
+
+func toInt(buf []byte) int <span class="cov4" title="349">{
+        if len(buf) == 0 </span><span class="cov2" title="24">{
+                return cEmpty
+        }</span>
+        <span class="cov4" title="325">n := 0
+        sign := 1
+        for _, ch := range buf </span><span class="cov4" title="344">{
+                if ch == '-' </span><span class="cov2" title="9">{
+                        sign = -1
+                        continue</span>
+                }
+                <span class="cov4" title="335">if ch &gt;= '0' &amp;&amp; ch &lt;= '9' </span><span class="cov3" title="71">{
+                        n = n*10 + int(ch-'0')
+                }</span> else<span class="cov4" title="264"> {
+                        return cNAN
+                }</span>
+        }
+        <span class="cov3" title="61">return n * sign</span>
+}
+
+func setKey(nod *tNode, key []byte, ikey int, sep byte, pos int) error <span class="cov3" title="94">{
+        switch sep </span>{
+        case ']':<span class="cov3" title="54"></span>
+                // end of key list
+        case ',':<span class="cov2" title="8">
+                nod.Type |= cAgg | cDot</span> // cDot to extract values
+        case ':':<span class="cov2" title="28">
+                nod.Type |= cSlice</span>
+        case 0:<span class="cov1" title="3">
+                return errPathUnexpectedEnd</span>
+        default:<span class="cov1" title="1">
+                return errPathInvalidChar</span>
+        }
+
+        <span class="cov3" title="90">if nod.Type&amp;cAgg &gt; 0 </span><span class="cov2" title="15">{
+                nod.Keys = append(nod.Keys, key)
+                if ikey != cNAN &amp;&amp; ikey != cEmpty </span><span class="cov1" title="4">{
+                        nod.Elems = append(nod.Elems, ikey)
+                }</span>
+                <span class="cov2" title="15">return nil</span>
+        }
+        <span class="cov3" title="75">if nod.Type&amp;cSlice &gt; 0 </span><span class="cov3" title="42">{
+                if ikey == cNAN || pos &gt; 2 </span><span class="cov0" title="0">{
+                        return errPathInvalidChar
+                }</span>
+                <span class="cov3" title="42">if pos == 2 </span><span class="cov2" title="7">{
+                        if ikey == cEmpty || ikey == 0 </span><span class="cov1" title="1">{
+                                ikey = 1
+                        }</span>
+                        <span class="cov2" title="7">if ikey != 1 </span><span class="cov1" title="5">{
+                                nod.Type |= cFullScan
+                        }</span>
+                }
+                <span class="cov3" title="42">nod.Slice[pos] = ikey
+                return nil</span>
+        }
+        // cDot
+        <span class="cov2" title="33">if len(key) &gt; 0 </span><span class="cov2" title="27">{
+                nod.Keys = append(nod.Keys, key)
+        }</span>
+        <span class="cov2" title="33">nod.Slice[0] = ikey
+        nod.Type |= cDot
+        return nil</span>
+}
+
+var pathTerminator = []byte{' ', '\t', '&lt;', '=', '&gt;', '+', '-', '*', '/', ')', '&amp;', '|', '!'}
+
+func detectFn(path []byte, i int, nod *tNode) (bool, int, error) <span class="cov1" title="5">{
+        if len(nod.Keys) == 0 </span><span class="cov0" title="0">{
+                return true, i, errPathUnknownFunction
+        }</span>
+        <span class="cov1" title="5">if !(bytes.EqualFold(nod.Keys[0], []byte("length")) ||
+                bytes.EqualFold(nod.Keys[0], []byte("count")) ||
+                bytes.EqualFold(nod.Keys[0], []byte("size"))) </span><span class="cov1" title="1">{
+                return true, i, errPathUnknownFunction
+        }</span>
+        <span class="cov1" title="4">nod.Type |= cFunction
+        nod.Type &amp;^= cDot
+        return true, i + 2, nil</span>
+}
+
+func getValue(input []byte, nod *tNode, inside bool) (result []byte, err error) <span class="cov4" title="948">{
+
+        if len(input) == 0 </span><span class="cov0" title="0">{
+                return nil, nil
+        }</span>
+        <span class="cov4" title="948">if nod == nil </span><span class="cov4" title="359">{
+                e, err := skipValue(input, 0)
+                if !inside </span><span class="cov4" title="322">{
+                        return input[:e], err
+                }</span>
+                <span class="cov2" title="37">return input[:e:e], err</span>
+        }
+        <span class="cov4" title="589">i, _ := skipSpaces(input, 0) // we're at the value
+        input = input[i:]
+
+        agg := nod.Type&amp;(cAgg|cSlice|cDeep|cWild|cFilter) &gt; 0
+        switch </span>{
+        case nod.Type&amp;(cDot|cDeep) &gt; 0:<span class="cov4" title="522"> // single or multiple key
+                result, err = getValueDot(input, nod, agg || inside)</span> // recurse inside
+        case nod.Type&amp;cSlice &gt; 0:<span class="cov2" title="27"> // array slice [::]
+                result, err = getValueSlice(input, nod)</span> // recurse inside
+        case nod.Type&amp;cFunction &gt; 0:<span class="cov2" title="7"> // func()
+                result, err = doFunc(input, nod)</span> // no recurse
+        case nod.Type&amp;cFilter &gt; 0:<span class="cov2" title="33"> // [?(...)]
+                result, err = getValueFilter(input, nod, agg || inside)</span> // no recurse
+        default:<span class="cov0" title="0">
+                return nil, errFieldNotFound</span>
+        }
+        <span class="cov4" title="589">if agg &amp;&amp; !inside </span><span class="cov3" title="81">{
+                result = append(append([]byte{'['}, result...), byte(']'))
+        }</span>
+        <span class="cov4" title="589">return result, err</span>
+}
+
+// $.foo, $['foo','bar'], $[1], $[1,2]
+func getValueDot(input []byte, nod *tNode, inside bool) (result []byte, err error) <span class="cov4" title="522">{
+        if len(input) == 0 </span><span class="cov0" title="0">{
+                return
+        }</span>
+        <span class="cov4" title="522">switch input[0] </span>{
+        case '{':<span class="cov4" title="408">
+                return objectValueByKey(input, nod, inside)</span> // 1+ (recurse inside) (+deep)
+        case '[':<span class="cov3" title="49">
+                return arrayElemByIndex(input, nod, inside)</span> // 1+ (recurse inside)
+        default:<span class="cov3" title="65">
+                return nil, nil</span>
+        }
+}
+
+// $[1:3], $[1:7:2]
+// $..[1:3], $..[1:7:2]
+func getValueSlice(input []byte, nod *tNode) (result []byte, err error) <span class="cov2" title="27">{
+        if len(input) == 0 </span><span class="cov0" title="0">{
+                return
+        }</span>
+        <span class="cov2" title="27">switch input[0] </span>{
+        case '{':<span class="cov1" title="2">
+                if nod.Type&amp;cDeep &gt; 0 </span><span class="cov0" title="0">{
+                        return objectDeep(input, nod) // (recurse inside) (+deep)
+                }</span>
+                <span class="cov1" title="2">return</span>
+        case '[':<span class="cov2" title="21">
+                return arraySlice(input, nod)</span> // 1+ (recurse inside) (+deep)
+        default:<span class="cov1" title="4">
+                return nil, nil</span>
+        }
+}
+
+func getValueFilter(input []byte, nod *tNode, inside bool) ([]byte, error) <span class="cov2" title="33">{
+        if len(input) == 0 </span><span class="cov0" title="0">{
+                return nil, errUnexpectedEnd
+        }</span>
+        <span class="cov2" title="33">switch input[0] </span>{
+        case '{':<span class="cov0" title="0">
+                if nod.Type&amp;cDeep &gt; 0 </span><span class="cov0" title="0">{
+                        return objectDeep(input, nod) // (recurse inside) (+deep)
+                }</span>
+                <span class="cov0" title="0">return nil, nil</span>
+        case '[':<span class="cov2" title="33">
+                return arrayElemByFilter(input, nod, true)</span> // 1+ (recurse inside)
+        default:<span class="cov0" title="0">
+                return nil, errObjectOrArrayExpected</span>
+        }
+}
+
+// TODO: deep
+func arrayElemByFilter(input []byte, nod *tNode, inside bool) (result []byte, err error) <span class="cov2" title="33">{
+        var s, e int
+        var b bool
+        var sub []byte
+        i := 1 // skip '['
+        l := len(input)
+
+        for i &lt; l &amp;&amp; input[i] != ']' </span><span class="cov3" title="123">{
+                s, e, i, err = valuate(input, i)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, err
+                }</span>
+                <span class="cov3" title="123">b, err = filterMatch(input[s:e], nod.Filter.toks)
+                if err != nil </span><span class="cov1" title="3">{
+                        return nil, err
+                }</span>
+                <span class="cov3" title="120">if b </span><span class="cov3" title="63">{
+                        sub, err = getValue(input[s:e], nod.Next, inside) // recurse
+                        if len(sub) &gt; 0 </span><span class="cov3" title="63">{
+                                result = plus(result, sub)
+                        }</span>
+                }
+        }
+        <span class="cov2" title="30">return result, err</span>
+}
+
+// ***
+func objectValueByKey(input []byte, nod *tNode, inside bool) ([]byte, error) <span class="cov4" title="408">{
+        var (
+                err error
+                key []byte
+        )
+        i := 1 // skip '{'
+        l := len(input)
+        var res []byte
+        var elems [][]byte
+        if len(nod.Keys) &gt; 1 || nod.Type&amp;cDeep &gt; 0 </span><span class="cov3" title="42">{
+                elems = make([][]byte, len(nod.Keys))
+        }</span>
+
+        <span class="cov4" title="408">for i &lt; l &amp;&amp; input[i] != '}' </span><span class="cov4" title="1230">{
+                key, i, err = readObjectKey(input, i)
+                if err != nil </span><span class="cov1" title="3">{
+                        return nil, err
+                }</span>
+                <span class="cov4" title="1227">elems, res, i, err = keyCheck(key, input, i, nod, elems, res, inside)
+                if err != nil </span><span class="cov2" title="11">{
+                        return nil, err
+                }</span>
+                <span class="cov4" title="1216">if nod.Type&amp;cDot &gt; 0 &amp;&amp; len(res) &gt; 0 </span><span class="cov4" title="327">{
+                        return res, nil
+                }</span>
+        }
+        <span class="cov3" title="67">if i == l </span><span class="cov0" title="0">{
+                return nil, errUnexpectedEnd
+        }</span>
+        <span class="cov3" title="67">for i := 0; i &lt; len(elems); i++ </span><span class="cov3" title="85">{
+                if elems[i] != nil </span><span class="cov2" title="37">{
+                        res = plus(res, elems[i])
+                }</span>
+        }
+        <span class="cov3" title="67">return res, nil</span>
+}
+
+func objectDeep(input []byte, nod *tNode) ([]byte, error) <span class="cov0" title="0">{
+        var (
+                err  error
+                s, e int
+                deep []byte
+        )
+        i := 1 // skip '{'
+        l := len(input)
+        var res []byte
+
+        for i &lt; l &amp;&amp; input[i] != '}' </span><span class="cov0" title="0">{
+                _, i, err = readObjectKey(input, i)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, err
+                }</span>
+                <span class="cov0" title="0">s, e, i, err = valuate(input, i) // s:e holds a value
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, err
+                }</span>
+                <span class="cov0" title="0">deep, err = getValue(input[s:e], nod, true) // recurse
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, err
+                }</span>
+                <span class="cov0" title="0">if len(deep) &gt; 0 </span><span class="cov0" title="0">{
+                        res = plus(res, deep)
+                }</span>
+        }
+        <span class="cov0" title="0">if i == l </span><span class="cov0" title="0">{
+                return nil, errUnexpectedEnd
+        }</span>
+        <span class="cov0" title="0">return res, nil</span>
+}
+
+// [x]
+// seek to key
+// read key
+// seek to value
+//
+// return key, i
+//
+func readObjectKey(input []byte, i int) ([]byte, int, error) <span class="cov4" title="1230">{
+        l := len(input)
+        for input[i] != '"' </span><span class="cov5" title="2109">{
+                i++
+                if i == l </span><span class="cov0" title="0">{
+                        return nil, i, errUnexpectedEnd
+                }</span>
+                <span class="cov5" title="2109">if input[i] == '}' </span><span class="cov0" title="0">{
+                        return nil, i, nil
+                }</span>
+        }
+        <span class="cov4" title="1230">s := i + 1
+        e, err := skipString(input, i)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, i, err
+        }</span>
+        <span class="cov4" title="1230">i, err = seekToValue(input, e)
+        if err != nil </span><span class="cov1" title="3">{
+                return nil, i, err
+        }</span>
+        <span class="cov4" title="1227">return input[s : e-1], i, nil</span>
+}
+
+// get array element(s) by index
+//
+// $[3] or $[-3] or $[1,2,-3]
+// $..[3] or $..[1,2,-3]
+//
+// recurse inside
+//
+func arrayElemByIndex(input []byte, nod *tNode, inside bool) ([]byte, error) <span class="cov3" title="49">{
+        var res []byte
+        elems, elem, err := arrayIterateElems(input, nod)
+        if err != nil </span><span class="cov1" title="1">{
+                return nil, err
+        }</span>
+        <span class="cov3" title="48">if len(nod.Elems) == 0 &amp;&amp; nod.Slice[0] &lt; 0 </span><span class="cov1" title="2">{ // $[-3]
+                i := len(elems) + nod.Slice[0]
+                if i &gt;= 0 &amp;&amp; i &lt; len(elems) </span><span class="cov1" title="1">{
+                        elem = input[elems[i].start:elems[i].end]
+                }</span>
+        }
+        <span class="cov3" title="48">if elem != nil </span><span class="cov2" title="19">{ // $[3] or $[-3]
+                res, err = getValue(elem, nod.Next, inside) // next node
+                if err != nil || nod.Type&amp;cDeep == 0 </span><span class="cov2" title="14">{
+                        return res, err
+                }</span>
+        }
+        // $[1,...] or $..[1,...]
+        <span class="cov2" title="34">return collectRecurse(input, nod, elems, res, inside)</span> // process elems + deepscan inside
+}
+
+// get array slice
+//
+// $[:3] or $[1:5:2] or $[:]
+// $..[1:5] or $..[5:1:-1]
+//
+// recurse inside
+//
+func arraySlice(input []byte, nod *tNode) ([]byte, error) <span class="cov2" title="21">{
+        elems, _, err := arrayIterateElems(input, nod)
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov2" title="21">if len(elems) &gt; 0 &amp;&amp; nod.Type&amp;cFullScan == 0 &amp;&amp; nod.Next == nil </span><span class="cov1" title="3">{
+                // 5.1)
+                return input[elems[0].start:elems[len(elems)-1].end], nil
+        }</span>
+        <span class="cov2" title="18">return sliceRecurse(input, nod, elems)</span>
+}
+
+// iterate over array elements
+//   cases
+//     1) $[2]    cDot: nod.Left (&gt;0)     --&gt; seek to elem
+//     2) $[2,3]  cDot: nod.Elems (&gt;0)    --&gt; scan collecting elems
+//     3) $[-3]   cDot: nod.Left (&lt;0)     --&gt; full scan (cFullScan)
+//     4) $[2,-3] cDot: nod.Elems (&lt;0)    --&gt; full scan (cFullScan)
+//     5) $[1:3]  cSlice: Left &lt; Right    --&gt; scan up to right --&gt; elems
+//        5.1) terminal: return input[left:right]
+//        5.2) non-term: iterate and recurse
+//     6) .....   cSlice: other           --&gt; full scan (cFullScan), apply bounds &amp; recurse
+//     7) cWild, cDeep:                   --&gt; full scan (cFullScan), apply bounds &amp; recurse
+// returns
+//   elem   - for a single index or cDeep
+//   elems  - for a list of indexes or cDeep
+//
+func arrayIterateElems(input []byte, nod *tNode) (elems []tElem, elem []byte, err error) <span class="cov3" title="70">{
+        var i, s, e int
+        l := len(input)
+        i = 1 // skip '['
+BFOR:
+        for pos := 0; i &lt; l &amp;&amp; input[i] != ']'; pos++ </span><span class="cov7" title="100174">{
+                s, e, i, err = valuate(input, i)
+                if err != nil </span><span class="cov1" title="1">{
+                        return
+                }</span>
+                <span class="cov7" title="100173">found := nod.Type&amp;(cFullScan|cWild|cDeep) &gt; 0 // 3) 4) 6?) 7)
+                for f := 0; !found &amp;&amp; f &lt; len(nod.Elems); f++ </span><span class="cov1" title="5">{
+                        if nod.Elems[f] == pos </span><span class="cov1" title="2">{ // 2)
+                                found = true
+                        }</span>
+                }
+                <span class="cov7" title="100173">if nod.Slice[2] == 1 </span><span class="cov7" title="100148">{
+                        switch nod.Type &amp; (cDot | cSlice | cFullScan | cWild) </span>{
+                        case cSlice:<span class="cov2" title="28"> // 5)
+                                found = pos &gt;= nod.Slice[0]
+                                if pos &gt;= nod.Slice[1] </span><span class="cov1" title="6">{
+                                        break BFOR</span>
+                                }
+                        case cDot:<span class="cov7" title="100043">
+                                if nod.Slice[0] == pos </span><span class="cov2" title="18">{ // 1)
+                                        elem = input[s:e]
+                                        if nod.Type&amp;cDeep == 0 </span><span class="cov2" title="13">{
+                                                break BFOR</span> // found single
+                                        }
+                                }
+                        }
+                }
+
+                <span class="cov7" title="100154">if found </span><span class="cov3" title="131">{
+                        elems = append(elems, tElem{s, e})
+                        if nod.Type&amp;cFullScan == 0 &amp;&amp; len(elems) == len(nod.Elems) </span><span class="cov1" title="1">{
+                                break</span> // $[1,2,3] --&gt; found them all
+                        }
+                }
+        }
+        <span class="cov3" title="69">return</span>
+}
+
+// aggregate non-empty elems and possibly non-empty ret
+//
+func collectRecurse(input []byte, nod *tNode, elems []tElem, res []byte, inside bool) ([]byte, error) <span class="cov2" title="34">{
+        var err error
+
+        if nod.Type&amp;cFullScan == 0 || nod.Type&amp;cWild &gt; 0 </span><span class="cov2" title="32">{
+                // special case 2): elems already listed
+                for i := 0; i &lt; len(elems); i++ </span><span class="cov3" title="60">{
+                        //if nod.Type&amp;cWild &gt; 0 {
+                        //        res = plus(res, input[elems[i].start:elems[i].end]) // wild
+                        //}
+                        res, err = subSlice(input, nod, elems, i, res, inside) // recurse + deep
+                        if err != nil </span><span class="cov0" title="0">{
+                                return res, err
+                        }</span>
+                }
+                <span class="cov2" title="32">return res, err</span>
+        }
+        // collect &amp; recurse (cFullScan)
+        <span class="cov1" title="2">for i := 0; i &lt; len(nod.Elems); i++ </span><span class="cov1" title="2">{
+                e := nod.Elems[i]
+                if e &lt; 0 </span><span class="cov1" title="1">{
+                        e += len(elems)
+                }</span>
+                <span class="cov1" title="2">if e &gt;= 0 &amp;&amp; e &lt; len(elems) </span><span class="cov1" title="2">{
+                        res, err = subSlice(input, nod, elems, e, res, inside) // recurse + deep
+                        if err != nil </span><span class="cov0" title="0">{
+                                return res, err
+                        }</span>
+                }
+        }
+        <span class="cov1" title="2">return res, err</span>
+}
+
+// slice requested elements
+//
+// recurse on each element
+//
+// deepscan on each element if needed
+func sliceRecurse(input []byte, nod *tNode, elems []tElem) ([]byte, error) <span class="cov3" title="43">{
+        var res []byte
+        var err error
+        a, b, step, err := adjustBounds(nod.Slice[0], nod.Slice[1], nod.Slice[2], len(elems))
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov3" title="43">if nod.Type&amp;cWild &gt; 0 </span><span class="cov1" title="5">{
+                a, b, step = 0, len(elems), 1
+        }</span>
+        <span class="cov3" title="43">if nod.Type&amp;(cFullScan|cDeep|cWild) &gt; 0 </span><span class="cov2" title="37">{
+                for ; (a &gt; b &amp;&amp; step &lt; 0) || (a &lt; b &amp;&amp; step &gt; 0); a += step </span><span class="cov3" title="90">{
+                        res, err = subSlice(input, nod, elems, a, res, false) // TODO: make option to switch this to TRUE (nested aggregation)
+                        if err != nil </span><span class="cov0" title="0">{
+                                return nil, err
+                        }</span>
+                }
+        } else<span class="cov1" title="6"> {
+                // 5.2) special case: elems already filtered
+                for i := 0; i &lt; len(elems); i++ </span><span class="cov2" title="9">{
+                        res, err = subSlice(input, nod, elems, i, res, false) // TODO: make option to switch this to TRUE (nested aggregation)
+                        if err != nil </span><span class="cov0" title="0">{
+                                return nil, err
+                        }</span>
+                }
+        }
+        <span class="cov3" title="43">return res, err</span>
+}
+
+func subSlice(input []byte, nod *tNode, elems []tElem, i int, res []byte, inside bool) ([]byte, error) <span class="cov3" title="161">{
+        var sub []byte
+        var err error
+        if nod.Type&amp;(cWild|cDeep) != cDeep </span><span class="cov3" title="121">{
+                sub, err = getValue(input[elems[i].start:elems[i].end], nod.Next, inside)
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, err
+                }</span>
+                <span class="cov3" title="121">if len(sub) &gt; 0 </span><span class="cov3" title="120">{
+                        res = plus(res, sub)
+                }</span>
+        }
+        <span class="cov3" title="161">if nod.Type&amp;cDeep &gt; 0 </span><span class="cov3" title="45">{
+                sub, err = getValue(input[elems[i].start:elems[i].end], nod, true) // deepscan
+                if len(sub) &gt; 0 </span><span class="cov2" title="17">{
+                        res = plus(res, sub)
+                }</span>
+        }
+        <span class="cov3" title="161">return res, nil</span>
+}
+
+/*
+        input:
+         - key                = key that has been found
+         - input        = input[i]
+         - i                = points at value
+         - nod                = current node
+         - elems        =
+        return:
+         - elems    = multikey or wild
+         - res            = single key or deep
+         - i        =
+         - error    =
+*/
+func keyCheck(key []byte, input []byte, i int, nod *tNode, elems [][]byte, res []byte, inside bool) ([][]byte, []byte, int, error) <span class="cov4" title="1227">{
+        // var s, e int
+        var err error
+        // var val []byte
+
+        // s, e, i, err = valuate(input, i) // s:e holds a value
+        // if err != nil {
+        //         return elems, res, i, err
+        // }
+        // val = input[s:e]
+
+        i, err = skipSpaces(input, i)
+        if err != nil </span><span class="cov0" title="0">{
+                return elems, res, i, err
+        }</span>
+
+        <span class="cov4" title="1227">b := i
+        if nod.Type&amp;cWild &gt; 0 </span><span class="cov2" title="31">{
+                elems, res, i, err = processKey(nod, nil, key, input, i, elems, res, false) // TODO: make option to switch the last FALSE to "inside" (nested aggregation)
+        }</span> else<span class="cov4" title="1196"> {
+                for ii := range nod.Keys </span><span class="cov4" title="1237">{
+                        elems, res, i, err = processKey(nod, nod.Keys[ii], key, input, i, elems, res, false) // TODO: make option to switch the last FALSE to "inside" (nested aggregation)
+                }</span>
+        }
+
+        <span class="cov4" title="1227">if nod.Type&amp;cDot &gt; 0 &amp;&amp; len(res) &gt; 0 </span><span class="cov4" title="330">{
+                return elems, res, i, err
+        }</span>
+
+        <span class="cov4" title="897">if b == i </span><span class="cov4" title="791">{
+                i, err = skipValue(input, i)
+                if err != nil </span><span class="cov1" title="5">{
+                        return elems, res, i, err
+                }</span>
+        }
+        <span class="cov4" title="892">i, err = skipSpaces(input, i)
+        return elems, res, i, err</span>
+}
+
+func processKey(
+        nod *tNode,
+        nodkey []byte,
+        key []byte,
+        input []byte,
+        i int,
+        elems [][]byte,
+        res []byte,
+        inside bool,
+) ([][]byte, []byte, int, error) <span class="cov4" title="1268">{
+        var err error
+        var deep []byte
+        var sub []byte
+        e := i
+        match := matchKeys(key, nodkey) || nod.Type&amp;cWild &gt; 0
+        if nod.Type&amp;cDeep &gt; 0 || match </span><span class="cov4" title="448">{
+                // key match
+                if nod.Type&amp;cDeep == 0 </span><span class="cov4" title="388">{ // $.a  $.a.x  $[a,b]  $.*
+                        if len(nod.Keys) == 1 </span><span class="cov4" title="339">{
+                                // $.a  $.a.x
+                                res, err = getValue(input[i:], nod.Next, inside || nod.Type&amp;cWild &gt; 0) // recurse
+                                return elems, res, i, err
+                        }</span>
+                        // $[a,b]  $[a,b].x  $.*
+                        <span class="cov3" title="49">e, err = skipValue(input, i)
+                        if err != nil </span><span class="cov0" title="0">{
+                                return elems, res, i, err
+                        }</span>
+                        <span class="cov3" title="49">sub, err = getValue(input[i:e], nod.Next, inside || nod.Type&amp;cWild &gt; 0)
+                        if len(sub) &gt; 0 </span><span class="cov2" title="37">{
+                                elems = append(elems, sub)
+                        }</span>
+                } else<span class="cov3" title="60"> { // deep: $..a  $..[a,b]
+                        e, err = skipValue(input, i)
+                        if err != nil </span><span class="cov0" title="0">{
+                                return elems, res, i, err
+                        }</span>
+                        <span class="cov3" title="60">if match </span><span class="cov2" title="27">{
+                                res = plus(res, input[i:e:e])
+                        }</span>
+                        <span class="cov3" title="60">deep, err = getValue(input[i:e:e], nod, true) // deepscan
+                        if len(deep) &gt; 0 </span><span class="cov2" title="18">{
+                                res = plus(res, deep)
+                        }</span>
+                }
+        }
+        <span class="cov4" title="929">return elems, res, e, err</span>
+}
+
+func matchKeys(key []byte, nodkey []byte) bool <span class="cov4" title="1268">{
+        a, b := 0, 0
+        la, lb := len(key), len(nodkey)
+        for a &lt; la &amp;&amp; b &lt; lb </span><span class="cov5" title="2720">{
+                ch := key[a]
+                if ch == '\\' </span><span class="cov1" title="1">{
+                        a++
+                        if a == la </span><span class="cov0" title="0">{
+                                break</span>
+                        }
+                        <span class="cov1" title="1">switch key[a] </span>{
+                        case '"', '\\', '/':<span class="cov1" title="1">
+                                ch = key[a]</span>
+                        case 'b', 'f', 'n', 'r', 't':<span class="cov0" title="0">
+                                ch = speChars[key[a]]</span>
+                        case 'u':<span class="cov0" title="0">
+                                if a &gt; la-5 || b &gt; b-2 </span><span class="cov0" title="0">{
+                                        break</span>
+                                }
+                                <span class="cov0" title="0">bb := make([]byte, 2)
+                                _, err := hex.Decode(bb, key[a+1:a+5])
+                                if err != nil </span><span class="cov0" title="0">{
+                                        return false
+                                }</span>
+                                <span class="cov0" title="0">if bb[0] != nodkey[b] </span><span class="cov0" title="0">{
+                                        return false
+                                }</span>
+                                <span class="cov0" title="0">b++
+                                ch = bb[1]</span>
+                        }
+                }
+                <span class="cov5" title="2720">if ch != nodkey[b] </span><span class="cov4" title="853">{
+                        return false
+                }</span>
+                <span class="cov5" title="1867">a++
+                b++</span>
+        }
+        <span class="cov4" title="415">return a == la &amp;&amp; b == lb</span>
+}
+
+func valuate(input []byte, i int) (int, int, int, error) <span class="cov7" title="100314">{
+        var err error
+        var s int
+        s, err = skipSpaces(input, i)
+        if err != nil </span><span class="cov0" title="0">{
+                return 0, 0, i, err
+        }</span>
+        <span class="cov7" title="100314">e, err := skipValue(input, s) // s:e holds a value
+        if err != nil </span><span class="cov1" title="1">{
+                return s, e, i, err
+        }</span>
+        <span class="cov7" title="100313">i, err = skipSpaces(input, e)
+        return s, e, i, err</span>
+}
+
+func plus(res []byte, val []byte) []byte <span class="cov4" title="282">{
+        if len(val) == 0 </span><span class="cov0" title="0">{
+                return res
+        }</span>
+        <span class="cov4" title="282">if len(res) &gt; 0 </span><span class="cov3" title="155">{
+                res = append(res[:len(res):len(res)], ',')
+        }</span>
+        <span class="cov4" title="282">return append(res[:len(res):len(res)], val...)</span>
+}
+
+type tElem struct {
+        start int
+        end   int
+}
+
+// always moving from start to end
+// step sets the direction
+// start bound always included
+// non-empty end bound always excluded
+//
+// empty bound rules
+//   positive step:
+//     empty start = 0
+//     empty end = last item (included)
+//   negative step:
+//     empty start = last item
+//     empty end = first item (included)
+//
+func adjustBounds(start int, stop int, step int, n int) (int, int, int, error) <span class="cov3" title="57">{
+        if n == 0 </span><span class="cov1" title="4">{
+                return 0, 0, 0, nil
+        }</span>
+        <span class="cov3" title="53">if step == 0 || step == cEmpty </span><span class="cov2" title="27">{
+                step = 1
+        }</span>
+        <span class="cov3" title="53">if start == cEmpty </span><span class="cov2" title="18">{
+                if step &gt; 0 </span><span class="cov2" title="11">{
+                        start = 0
+                }</span> else<span class="cov2" title="7"> {
+                        start = n - 1
+                }</span>
+        }
+        <span class="cov3" title="53">if stop &lt; 0 </span><span class="cov2" title="12">{
+                stop += n
+        }</span>
+        <span class="cov3" title="53">if stop &lt; 0 </span><span class="cov1" title="1">{
+                stop = -1
+        }</span>
+        <span class="cov3" title="53">if stop == cEmpty </span><span class="cov2" title="21">{
+                if step &gt; 0 </span><span class="cov2" title="13">{
+                        stop = n
+                }</span> else<span class="cov2" title="8"> {
+                        stop = -1
+                }</span>
+        }
+        <span class="cov3" title="53">if start &lt; 0 </span><span class="cov2" title="15">{
+                start += n
+        }</span>
+        <span class="cov3" title="53">if start &lt; 0 </span><span class="cov1" title="6">{
+                start = 0
+        }</span>
+        <span class="cov3" title="53">if start &gt;= n </span><span class="cov0" title="0">{
+                start = n - 1
+        }</span>
+        <span class="cov3" title="53">if stop &gt; n </span><span class="cov1" title="6">{
+                stop = n
+        }</span>
+        <span class="cov3" title="53">return start, stop, step, nil</span>
+}
+
+func seekToValue(input []byte, i int) (int, error) <span class="cov4" title="1230">{
+        var err error
+        // spaces before ':'
+        i, err = skipSpaces(input, i)
+        if err != nil </span><span class="cov1" title="1">{
+                return 0, err
+        }</span>
+        <span class="cov4" title="1229">if input[i] != ':' </span><span class="cov1" title="1">{
+                return 0, errColonExpected
+        }</span>
+        <span class="cov4" title="1228">i++ // colon
+        return skipSpaces(input, i)</span>
+}
+
+// skips value, return (i) position of the 1st char after the value
+func skipValue(input []byte, i int) (int, error) <span class="cov7" title="101711">{
+        var err error
+        // spaces
+        i, err = skipSpaces(input, i)
+        if err != nil </span><span class="cov0" title="0">{
+                return 0, err
+        }</span>
+
+        <span class="cov7" title="101711">l := len(input)
+        if i &gt;= l </span><span class="cov0" title="0">{
+                return i, nil
+        }</span>
+        <span class="cov7" title="101711">if input[i] == '"' </span><span class="cov4" title="958">{
+                // string
+                return skipString(input, i)
+        }</span> else<span class="cov7" title="100753"> if input[i] == '{' || input[i] == '[' </span><span class="cov7" title="100351">{
+                // object or array
+                return skipObject(input, i)
+        }</span> else<span class="cov4" title="402"> {
+                if (input[i] &gt;= '0' &amp;&amp; input[i] &lt;= '9') || input[i] == '-' || input[i] == '.' </span><span class="cov4" title="272">{
+                        // number
+                        i = skipNumber(input, i)
+                }</span> else<span class="cov3" title="130"> {
+                        // bool, null
+                        i, err = skipBoolNull(input, i)
+                        if err != nil </span><span class="cov1" title="5">{
+                                return i, err
+                        }</span>
+                }
+        }
+        <span class="cov4" title="397">return i, nil</span>
+}
+
+func skipNumber(input []byte, i int) int <span class="cov4" title="272">{
+        l := len(input)
+        for ; i &lt; l; i++ </span><span class="cov4" title="1246">{
+                ch := input[i]
+                if !((ch &gt;= '0' &amp;&amp; ch &lt;= '9') || ch == '.' || ch == '-' || ch == 'E' || ch == 'e') </span><span class="cov3" title="173">{
+                        break</span>
+                }
+        }
+        <span class="cov4" title="272">return i</span>
+}
+
+func skipBoolNull(input []byte, i int) (int, error) <span class="cov3" title="130">{
+        needles := [...][]byte{[]byte("true"), []byte("false"), []byte("null")}
+        for n := 0; n &lt; len(needles); n++ </span><span class="cov4" title="260">{
+                if matchSubslice(input[i:], needles[n]) </span><span class="cov3" title="125">{
+                        return i + len(needles[n]), nil
+                }</span>
+        }
+        <span class="cov1" title="5">return i, errUnrecognizedValue</span>
+}
+
+func matchSubslice(str, needle []byte) bool <span class="cov4" title="260">{
+        l := len(needle)
+        if len(str) &lt; l </span><span class="cov1" title="4">{
+                return false
+        }</span>
+        <span class="cov4" title="256">for i := 0; i &lt; l; i++ </span><span class="cov4" title="631">{
+                if str[i] != needle[i] </span><span class="cov3" title="131">{
+                        return false
+                }</span>
+        }
+        <span class="cov3" title="125">return true</span>
+}
+
+func doFunc(input []byte, nod *tNode) ([]byte, error) <span class="cov2" title="7">{
+        var err error
+        var result int
+        if bytes.Equal(word("size"), nod.Keys[0]) </span><span class="cov1" title="1">{
+                result, err = skipValue(input, 0)
+        }</span> else<span class="cov1" title="6"> if bytes.Equal(word("length"), nod.Keys[0]) || bytes.Equal(word("count"), nod.Keys[0]) </span><span class="cov1" title="6">{
+                if input[0] == '"' </span><span class="cov0" title="0">{
+                        result, err = skipString(input, 0)
+                }</span> else<span class="cov1" title="6"> if input[0] == '[' </span><span class="cov1" title="6">{
+                        i := 1
+                        l := len(input)
+                        // count elements
+                        for i &lt; l &amp;&amp; input[i] != ']' </span><span class="cov2" title="17">{
+                                _, _, i, err = valuate(input, i)
+                                if err != nil </span><span class="cov0" title="0">{
+                                        return nil, err
+                                }</span>
+                                <span class="cov2" title="17">result++</span>
+                        }
+                } else<span class="cov0" title="0"> {
+                        return nil, errInvalidLengthUsage
+                }</span>
+        }
+        <span class="cov2" title="7">if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+        <span class="cov2" title="7">return []byte(strconv.Itoa(result)), nil</span>
+}
+
+func skipSpaces(input []byte, i int) (int, error) <span class="cov7" title="307744">{
+        l := len(input)
+        for ; i &lt; l; i++ </span><span class="cov8" title="417402">{
+                if !bytein(input[i], []byte{' ', ',', '\t', '\r', '\n'}) </span><span class="cov7" title="307739">{
+                        break</span>
+                }
+        }
+        <span class="cov7" title="307744">if i == l </span><span class="cov1" title="5">{
+                return i, errUnexpectedEnd
+        }</span>
+        <span class="cov7" title="307739">return i, nil</span>
+}
+
+// *** : skip quoted string (consumes last bound)
+func skipString(input []byte, i int) (int, error) <span class="cov5" title="2188">{
+        bound := input[i]
+        done := false
+        escaped := false
+        i++ // bound
+        l := len(input)
+        for i &lt; l &amp;&amp; !done </span><span class="cov6" title="19346">{
+                ch := input[i]
+                if ch == bound &amp;&amp; !escaped </span><span class="cov5" title="2187">{
+                        done = true
+                }</span>
+                <span class="cov6" title="19346">escaped = ch == '\\' &amp;&amp; !escaped
+                i++</span>
+        }
+        <span class="cov5" title="2188">if i == l &amp;&amp; !done </span><span class="cov1" title="1">{
+                return 0, errUnexpectedEnd
+        }</span>
+        <span class="cov5" title="2187">return i, nil</span>
+}
+
+func skipObject(input []byte, i int) (int, error) <span class="cov7" title="100351">{
+        l := len(input)
+        mark := input[i]
+        unmark := mark + 2 // ] or }
+        nested := 0
+        instr := false
+        prev := mark
+        i++
+        for i &lt; l &amp;&amp; !(input[i] == unmark &amp;&amp; nested == 0 &amp;&amp; !instr) </span><span class="cov10" title="12847543">{
+                ch := input[i]
+                if ch == '"' </span><span class="cov8" title="1405555">{
+                        if prev != '\\' </span><span class="cov8" title="1405507">{
+                                instr = !instr
+                        }</span>
+                } else<span class="cov9" title="11441988"> if !instr </span><span class="cov9" title="4919371">{
+                        if ch == mark </span><span class="cov3" title="101">{
+                                nested++
+                        }</span> else<span class="cov9" title="4919270"> if ch == unmark </span><span class="cov3" title="101">{
+                                nested--
+                        }</span>
+                }
+                <span class="cov10" title="12847543">prev = ch
+                i++</span>
+        }
+        <span class="cov7" title="100351">if i == l </span><span class="cov1" title="2">{
+                return 0, errUnexpectedEnd
+        }</span>
+        <span class="cov7" title="100349">i++ // closing mark
+        return i, nil</span>
+}
+
+func repool(node *tNode) <span class="cov3" title="123">{
+        // return nodes back to pool
+        for </span><span class="cov4" title="426">{
+                if node == nil </span><span class="cov3" title="123">{
+                        break</span>
+                }
+                <span class="cov4" title="303">p := node.Next
+                nodePool.Put(node)
+                node = p</span>
+        }
+}
+
+func unspace(buf []byte) []byte <span class="cov3" title="123">{
+        r, w := 0, 0
+        bound := byte(0)
+        for r &lt; len(buf) </span><span class="cov5" title="2478">{
+                if (buf[r] == '\'' || buf[r] == '"') &amp;&amp; bound == 0 </span><span class="cov2" title="33">{
+                        bound = buf[r]
+                }</span> else<span class="cov5" title="2445"> if buf[r] == bound </span><span class="cov2" title="31">{
+                        bound = 0
+                }</span>
+                <span class="cov5" title="2478">if (buf[r] != ' ' &amp;&amp; buf[r] != '\t') || bound &gt; 0 </span><span class="cov5" title="2399">{
+                        if w != r </span><span class="cov4" title="566">{
+                                buf[w] = buf[r]
+                        }</span>
+                        <span class="cov5" title="2399">w++</span>
+                }
+                <span class="cov5" title="2478">r++</span>
+        }
+        <span class="cov3" title="123">return buf[:w]</span>
+}
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>
+<!-- cov: -->
