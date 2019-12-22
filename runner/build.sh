@@ -1,0 +1,1 @@
+sudo docker build . --build-arg GO_VERSION=1.13.5 --tag gocover

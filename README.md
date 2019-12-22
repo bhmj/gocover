@@ -20,6 +20,10 @@ Endpoints:
     - deep test
     - short test
   - `gocover.dev/badge/{repo}` get badge
+    - page url:
+      - {repo} = master/HEAD
+      - {repo}/tree/{branch} = branch/HEAD
+      - {repo}/tree/{tag} = tag/HEAD
   - `gocover.dev/hook/{repo}` webhook handler
   - `gocover.dev/register/` register
   - `gocover.dev/add/` add webhook for repo
