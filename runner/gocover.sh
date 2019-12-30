@@ -1,8 +1,8 @@
 #!/bin/ash
-PROJECT=$1
-OPTS=$2
-BRANCH=$3
-COMMIT=$4
+PROJECT="$1"
+OPTS="$2"
+BRANCH="$3"
+COMMIT="$4"
 
 echo "<!-- STEP: git clone -->"
 
@@ -14,16 +14,16 @@ else
     BRN="refs/heads/$BRANCH"
 fi
 if [ -z "$COMMIT" ]; then
-    COMMIT=`git ls-remote git://github.com/bhmj/jsonslice.git | grep $BRN | cut -f 1`
+    COMMIT=`git ls-remote git://${PROJECT}.git | grep $BRN | cut -f 1`
 fi
 
 mkdir -p $PROJECT
 cd $PROJECT
 
 if [ -z $BRANCH ]; then
-    git clone --depth 5 git://${PROJECT}.git .
+    git clone --quiet --recurse-submodules --shallow-submodules --depth 1 git://${PROJECT}.git .
 else
-    git clone --depth 5 --branch $BRANCH git://${PROJECT}.git .
+    git clone --quiet --recurse-submodules --shallow-submodules --depth 1 --branch $BRANCH git://${PROJECT}.git .
 fi
 
 if [ $? -gt 0 ]; then
@@ -32,8 +32,6 @@ if [ $? -gt 0 ]; then
 fi
 
 git checkout -q $COMMIT
-
-git status
 
 if [ $? -gt 0 ]; then
     echo "Cannot checkout commit '$COMMIT'" >&2
@@ -47,12 +45,13 @@ if [ $? -gt 0 ]; then
     exit 1
 fi
 
-echo "<!-- STEP: go test -->"
+echo "<!-- STEP: go test"
 
 OUTPUT=`go test -covermode=count -coverprofile=c.out $OPTS 2>&1 | tee /dev/tty`
 
+echo "STEP: go test -->"
+
 if [ $? -gt 0 ]; then
-    echo "$OUTPUT"
     exit 2
 fi
 
@@ -62,6 +61,8 @@ if [ ! -f c.out ]; then
 fi
 
 COVERAGE=`echo $OUTPUT | grep -o -E "[0-9.]+\%" | sed 's/%//'`
+
+echo "<!-- COVER:$COVERAGE -->"
 
 echo "<!-- STEP: go cover -->"
 
@@ -73,5 +74,3 @@ if [ $? -gt 0 ]; then
 fi
 
 echo "<!-- STEP: done -->"
-
-echo "<!-- cov:$COVERAGE -->"
